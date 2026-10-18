@@ -1,0 +1,6 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.34,<1
+python-multipart>=0.0.20,<1
+netmiko>=4.6,<5
+requests>=2.32,<3
+pycryptodome>=3.23,<4
