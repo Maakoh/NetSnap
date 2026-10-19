@@ -3,7 +3,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from app.services.jobs import create_job, get_job, parse_targets, retry_failed
+from app.services.jobs import create_job, get_job, parse_targets, retry_failed, cancel_job, preflight_targets
 
 app = FastAPI(title="NetSnap", description="Scan. Inventory. Backup.", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173","http://127.0.0.1:5173"], allow_credentials=False, allow_methods=["*"] , allow_headers=["*"])
@@ -15,7 +15,7 @@ class JobRequest(BaseModel):
     username: str
     password: str
     connection_method: str = "telnet"
-    concurrency: int = Field(12, ge=1, le=50)
+    concurrency: int = Field(2, ge=1, le=10)
     timeout: int = Field(8, ge=2, le=60)
 
 @app.get("/api/health")
@@ -46,6 +46,22 @@ def download(job_id: str):
     from app.services.jobs import JOBS
     path=Path(JOBS[job_id]["path"])/"NetSnap_Result.zip"
     return FileResponse(path, media_type="application/zip", filename=f"NetSnap_{job_id}.zip")
+
+class PreflightRequest(BaseModel):
+    targets: str
+
+@app.post("/api/preflight")
+def preflight(body: PreflightRequest):
+    try:
+        return preflight_targets(body.targets)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel(job_id: str):
+    if not cancel_job(job_id):
+        raise HTTPException(404, "Running job not found")
+    return get_job(job_id)
 
 class RetryRequest(BaseModel):
     username: str

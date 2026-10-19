@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 import zipfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from pathlib import Path
 from app.adapters import ADAPTERS
 
@@ -70,20 +70,36 @@ def parse_targets(raw: str):
     return result
 
 
+def preflight_targets(raw):
+    targets = parse_targets(raw)
+    if not targets:
+        raise ValueError("Add at least one target")
+    return {"targets": targets, "total": len(targets), "no_network_requests": True}
+
+
+def cancel_job(job_id):
+    with LOCK:
+        job = JOBS.get(job_id)
+        if not job or job["status"] not in {"queued", "running"}:
+            return False
+        job["cancel_requested"] = True
+        return True
+
+
 def _public_job(job):
     return {k:v for k,v in job.items() if k not in {"username","password","path"}}
 
 
-def create_job(vendor, operation, targets, username, password, connection_method="telnet", concurrency=12, timeout=8):
+def create_job(vendor, operation, targets, username, password, connection_method="telnet", concurrency=2, timeout=8):
     cleanup_jobs()
     job_id = uuid.uuid4().hex[:12]
     path = Path(tempfile.mkdtemp(prefix=f"netsnap_{job_id}_"))
     job = {
         "id":job_id, "vendor":vendor, "operation":operation, "targets":targets,
         "username":username, "password":password, "connection_method":connection_method,
-        "concurrency":max(1,min(concurrency,50)), "timeout":max(2,min(timeout,60)),
+        "concurrency":max(1,min(concurrency,10)), "timeout":max(2,min(timeout,60)),
         "status":"queued", "total":len(targets), "completed":0, "successful":0, "failed":0,
-        "results":[], "created_at":time.time(), "path":str(path), "download_ready":False, "parent_job_id":None,
+        "results":[], "created_at":time.time(), "path":str(path), "download_ready":False, "parent_job_id":None, "cancel_requested":False, "events":[],
     }
     with LOCK: JOBS[job_id] = job
     threading.Thread(target=_run_job, args=(job_id,), daemon=True).start()
@@ -168,18 +184,67 @@ def _run_job(job_id):
 
 def _execute_job(job_id):
     with LOCK:
-        job=JOBS[job_id]; job["status"]="running"
+        job = JOBS[job_id]
+        job["status"] = "running"
+        job["events"].append({"time": time.time(), "event": "started", "detail": f"{job['total']} approved targets; concurrency {job['concurrency']}"})
+    pending = iter(job["targets"])
+    # Bounded submission ensures cancellation does not queue the whole target list.
     with ThreadPoolExecutor(max_workers=job["concurrency"]) as pool:
-        futures={pool.submit(_scan_one,job,h):h for h in job["targets"]}
-        for future in as_completed(futures):
-            r=future.result()
+        active = {}
+        def submit_next():
             with LOCK:
-                job["results"].append(r); job["completed"] += 1
-                if r["status"] == "success": job["successful"] += 1
-                else: job["failed"] += 1
-    _write_csvs(job); _make_zip(job)
+                if job["cancel_requested"]:
+                    return False
+                try:
+                    host = next(pending)
+                except StopIteration:
+                    return False
+                active[pool.submit(_scan_one, job, host)] = host
+                return True
+        for _ in range(job["concurrency"]):
+            if not submit_next():
+                break
+        while active:
+            done, _ = wait(active, timeout=0.25, return_when=FIRST_COMPLETED)
+            for future in done:
+                host = active.pop(future)
+                try:
+                    result = future.result()
+                except Exception:
+                    result = {"ip": host, "system_name":"Unknown", "serial_number":"Unknown", "model":"Unknown", "status":"failed", "error":"Unexpected worker error", "error_type":"device_error", "config_file":None}
+                with LOCK:
+                    job["results"].append(result)
+                    job["completed"] += 1
+                    job["successful" if result["status"] == "success" else "failed"] += 1
+                    job["events"].append({"time":time.time(), "event":result["status"], "target":host, "detail":result.get("error_type") or "completed"})
+                submit_next()
     with LOCK:
-        job["status"]="complete"; job["username"]=""; job["password"]=""
+        cancelled = job["cancel_requested"]
+        if cancelled:
+            processed = {r["ip"] for r in job["results"]}
+            for host in job["targets"]:
+                if host not in processed:
+                    job["results"].append({"ip":host, "system_name":"Unknown", "serial_number":"Unknown", "model":"Unknown", "status":"skipped", "error":"Cancelled before connection", "error_type":"cancelled", "config_file":None})
+            job["events"].append({"time":time.time(), "event":"cancelled", "detail":"No additional targets were started"})
+        else:
+            job["events"].append({"time":time.time(), "event":"complete", "detail":"All targets processed"})
+    _write_csvs(job)
+    _write_events(job)
+    _make_zip(job)
+    with LOCK:
+        job["status"] = "cancelled" if cancelled else "complete"
+        job["username"] = ""
+        job["password"] = ""
+
+
+def _write_events(job):
+    with (Path(job["path"]) / "activity.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Timestamp UTC", "Event", "Target", "Detail"])
+        from datetime import datetime, timezone
+        for event in job["events"]:
+            stamp = datetime.fromtimestamp(event["time"], timezone.utc).isoformat()
+            writer.writerow([stamp, event["event"], event.get("target", ""), event.get("detail", "")])
 
 
 def cleanup_jobs():
@@ -196,7 +261,7 @@ def retry_failed(job_id: str, username: str, password: str):
         original = JOBS.get(job_id)
         if not original or original["status"] != "complete":
             raise ValueError("Original job not found or incomplete")
-        failed = [r["ip"] for r in original["results"] if r["status"] != "success"]
+        failed = [r["ip"] for r in original["results"] if r["status"] == "failed"]
         if not failed:
             raise ValueError("No failed devices to retry")
         settings = {k: original[k] for k in ("vendor", "operation", "connection_method", "concurrency", "timeout")}

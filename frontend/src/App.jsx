@@ -1,448 +1,61 @@
-import { useEffect, useMemo, useState } from 'react';
-import {
- Activity,
- Archive,
- CheckCircle2,
- Download,
- HardDriveDownload,
- LoaderCircle,
- Network,
- Play,
- ScanSearch,
- Server,
- ShieldCheck,
- XCircle,
-} from 'lucide-react';
+import {useEffect,useMemo,useState} from 'react'
+import {Activity,Archive,CheckCircle2,Download,HardDriveDownload,LoaderCircle,Network,Play,ScanSearch,Server,ShieldCheck,XCircle,Square} from 'lucide-react'
 
-const operations = [
- {
-  id: 'inventory',
-  icon: ScanSearch,
-  title: 'Inventory scan',
-  text: 'Collect hostname, serial number and model, then export the result.',
- },
- {
-  id: 'backup',
-  icon: HardDriveDownload,
-  title: 'Configuration backup',
-  text: 'Collect running configurations and package them into one ZIP.',
- },
- {
-  id: 'both',
-  icon: Archive,
-  title: 'Inventory + backup',
-  text: 'Collect inventory and configuration in the same device session.',
- },
-];
+const operations=[
+ {id:'inventory',icon:ScanSearch,title:'Inventory scan',text:'Collect hostname, serial number and model, then export the result.'},
+ {id:'backup',icon:HardDriveDownload,title:'Configuration backup',text:'Collect running configurations and package them into one ZIP.'},
+ {id:'both',icon:Archive,title:'Inventory + backup',text:'Collect inventory and configuration in the same device session.'},
+]
+const initial={vendor:'aruba',operation:'inventory',targets:'',username:'',password:'',connection_method:'telnet',concurrency:2,timeout:8}
 
-const initial = {
- vendor: 'aruba',
- operation: 'inventory',
- targets: '',
- username: '',
- password: '',
- connection_method: 'telnet',
- concurrency: 12,
- timeout: 8,
-};
-
-function Field({ label, children, hint }) {
- return (
-     <label className="grid gap-2 text-sm">
-      <span className="font-medium text-zinc-300">{label}</span>
-      {children}
-      {hint && <span className="text-xs text-zinc-500">{hint}</span>}
-     </label>
- );
-}
-
-function App() {
- const [form, setForm] = useState(initial);
- const [job, setJob] = useState(null);
- const [error, setError] = useState('');
-
- const busy = job && ['queued', 'running'].includes(job.status);
- const update = (key, value) => setForm((f) => ({ ...f, [key]: value }));
- const progress = job?.total ? Math.round((job.completed / job.total) * 100) : 0;
- const targetCount = useMemo(
-     () => form.targets.split(/[\n,]+/).filter((x) => x.trim()).length,
-     [form.targets]
- );
-
- async function importCSV(event) {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  const content = await file.text();
-  update('targets', content);
-  event.target.value = '';
- }
-
- async function retry() {
-  setError('');
-  try {
-   const r = await fetch(`/api/jobs/${job.id}/retry`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: form.username, password: form.password }),
-   });
-   const data = await r.json();
-   if (!r.ok) throw new Error(data.detail || 'Retry failed');
-   setJob(data);
-  } catch (e) {
-   setError(e.message);
-  }
- }
-
- async function start() {
-  setError('');
-  setJob(null);
-  try {
-   const r = await fetch('/api/jobs', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(form),
-   });
-   const data = await r.json();
-   if (!r.ok) throw new Error(data.detail || 'Could not start job');
-   setJob(data);
-  } catch (e) {
-   setError(e.message);
-  }
- }
-
- useEffect(() => {
-  if (!busy) return;
-  const t = setInterval(async () => {
-   try {
-    const r = await fetch(`/api/jobs/${job.id}`);
-    if (r.ok) setJob(await r.json());
-   } catch {}
-  }, 700);
-  return () => clearInterval(t);
- }, [busy, job?.id]);
-
- return (
-     <div className="min-h-screen">
-      <header className="border-b border-white/10 bg-black/20 backdrop-blur">
-       <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
-        <div className="flex items-center gap-3">
-         <div className="grid size-9 place-items-center rounded-xl bg-blue-500 text-white shadow-lg shadow-blue-500/20">
-          <Network size={19} />
-         </div>
-         <div>
-          <div className="font-semibold tracking-tight">NetSnap</div>
-          <div className="text-xs text-zinc-500">Scan. Inventory. Backup.</div>
-         </div>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-zinc-500">
-         <ShieldCheck size={15} /> Session-only processing
-        </div>
-       </div>
-      </header>
-
-      <main className="mx-auto max-w-7xl px-5 py-10">
-       <section className="mb-9 max-w-2xl">
-        <div className="mb-3 text-xs font-semibold uppercase tracking-[.22em] text-blue-400">
-         Network utility
-        </div>
-        <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-         Take a snapshot.
-         <br />
-         <span className="text-zinc-500">Keep what you need.</span>
-        </h1>
-        <p className="mt-4 max-w-xl text-sm leading-6 text-zinc-400">
-         Run a one-time inventory scan, collect switch configurations, or do both. NetSnap does
-         not require a device database.
-        </p>
-       </section>
-
-       <div className="grid gap-6 lg:grid-cols-[1fr_.9fr]">
-        {/* New session panel */}
-        <section className="rounded-2xl border border-white/10 bg-white/[.035] p-5 sm:p-6">
-         <div className="mb-5 flex items-center justify-between">
-          <div>
-           <h2 className="font-semibold">New session</h2>
-           <p className="mt-1 text-xs text-zinc-500">
-            Choose an operation and provide your targets.
-           </p>
-          </div>
-          <Activity className="text-zinc-600" size={19} />
-         </div>
-
-         <div className="grid gap-3 sm:grid-cols-3">
-          {operations.map((o) => (
-              <button
-                  disabled={busy}
-                  key={o.id}
-                  onClick={() => update('operation', o.id)}
-                  className={`rounded-xl border p-4 text-left transition ${
-                      form.operation === o.id
-                          ? 'border-blue-500/70 bg-blue-500/10'
-                          : 'border-white/10 bg-black/20 hover:border-white/20'
-                  }`}
-              >
-               <o.icon
-                   size={18}
-                   className={form.operation === o.id ? 'text-blue-400' : 'text-zinc-500'}
-               />
-               <div className="mt-3 text-sm font-medium">{o.title}</div>
-               <div className="mt-1 text-xs leading-5 text-zinc-500">{o.text}</div>
-              </button>
-          ))}
-         </div>
-
-         <div className="mt-6 grid gap-5 sm:grid-cols-2">
-          <Field label="Vendor">
-           <select
-               disabled={busy}
-               value={form.vendor}
-               onChange={(e) => update('vendor', e.target.value)}
-               className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2.5 outline-none focus:border-blue-500"
-           >
-            <option value="aruba">Aruba Instant On 1930</option>
-            <option value="cisco">Cisco Small Business</option>
-           </select>
-          </Field>
-
-          {form.vendor === 'cisco' ? (
-              <Field label="Connection">
-               <select
-                   disabled={busy}
-                   value={form.connection_method}
-                   onChange={(e) => update('connection_method', e.target.value)}
-                   className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2.5 outline-none focus:border-blue-500"
-               >
-                <option value="telnet">Telnet</option>
-                <option value="ssh">SSH</option>
-               </select>
-              </Field>
-          ) : (
-              <Field label="Connection">
-               <div className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2.5 text-zinc-500">
-                Web UI / HTTP
-               </div>
-              </Field>
-          )}
-
-          <Field label="Username">
-           <input
-               disabled={busy}
-               autoComplete="off"
-               value={form.username}
-               onChange={(e) => update('username', e.target.value)}
-               className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2.5 outline-none focus:border-blue-500"
-           />
-          </Field>
-
-          <Field label="Password">
-           <input
-               disabled={busy}
-               type="password"
-               autoComplete="new-password"
-               value={form.password}
-               onChange={(e) => update('password', e.target.value)}
-               className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2.5 outline-none focus:border-blue-500"
-           />
-          </Field>
-         </div>
-
-         <div className="mt-5">
-          <div className="mb-2 flex items-center justify-between">
-           <span className="text-sm font-medium text-zinc-300">Target input</span>
-           <label className="cursor-pointer text-xs font-medium text-blue-400 hover:text-blue-300">
-            Import CSV / TXT
-            <input
-                type="file"
-                accept=".csv,.txt,text/csv,text/plain"
-                className="hidden"
-                disabled={busy}
-                onChange={importCSV}
-            />
-           </label>
-          </div>
-          <Field
-              label="Targets"
-              hint="One IP/hostname per line, comma-separated, or an IP range such as 192.168.53.10-192.168.53.50."
-          >
-                <textarea
-                    disabled={busy}
-                    rows={7}
-                    value={form.targets}
-                    onChange={(e) => update('targets', e.target.value)}
-                    placeholder={'192.168.53.101\n192.168.53.102\n192.168.53.103'}
-                    className="resize-y rounded-lg border border-white/10 bg-zinc-950 px-3 py-3 font-mono text-sm outline-none placeholder:text-zinc-700 focus:border-blue-500"
-                />
-          </Field>
-         </div>
-
-         <div className="mt-5 grid gap-5 sm:grid-cols-2">
-          <Field label="Concurrency">
-           <input
-               disabled={busy}
-               type="number"
-               min="1"
-               max="50"
-               value={form.concurrency}
-               onChange={(e) => update('concurrency', +e.target.value)}
-               className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2.5 outline-none focus:border-blue-500"
-           />
-          </Field>
-          <Field label="Timeout (seconds)">
-           <input
-               disabled={busy}
-               type="number"
-               min="2"
-               max="60"
-               value={form.timeout}
-               onChange={(e) => update('timeout', +e.target.value)}
-               className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2.5 outline-none focus:border-blue-500"
-           />
-          </Field>
-         </div>
-
-         {error && (
-             <div className="mt-5 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-300">
-              {error}
-             </div>
-         )}
-
-         <div className="mt-6 flex items-center justify-between border-t border-white/10 pt-5">
-              <span className="text-xs text-zinc-500">
-                {targetCount} target line{targetCount === 1 ? '' : 's'}
-              </span>
-          <button
-              disabled={busy || !form.targets.trim() || !form.username || !form.password}
-              onClick={start}
-              className="inline-flex items-center gap-2 rounded-lg bg-blue-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-           {busy ? <LoaderCircle className="animate-spin" size={16} /> : <Play size={16} />}{' '}
-           {busy ? 'Running…' : 'Start session'}
-          </button>
-         </div>
-        </section>
-
-        {/* Session results panel */}
-        <section className="min-w-0 rounded-2xl border border-white/10 bg-white/[.035] p-5 sm:p-6">
-         <div className="mb-5">
-          <h2 className="font-semibold">Session results</h2>
-          <p className="mt-1 text-xs text-zinc-500">Live results from the current run.</p>
-         </div>
-
-         {!job ? (
-             <div className="grid min-h-[430px] place-items-center rounded-xl border border-dashed border-white/10 bg-black/10">
-              <div className="max-w-xs text-center">
-               <Server className="mx-auto text-zinc-700" size={28} />
-               <div className="mt-3 text-sm text-zinc-400">No session running</div>
-               <p className="mt-1 text-xs leading-5 text-zinc-600">
-                Configure your targets and start a session. Results will appear here as
-                devices finish.
-               </p>
-              </div>
-             </div>
-         ) : (
-             <>
-              <div className="mb-5">
-               <div className="mb-2 flex justify-between text-xs">
-                <span className="capitalize text-zinc-400">{job.status}</span>
-                <span className="text-zinc-500">
-                      {job.completed} / {job.total}
-                    </span>
-               </div>
-               <div className="h-2 overflow-hidden rounded-full bg-zinc-800">
-                <div
-                    className="h-full bg-blue-500 transition-all"
-                    style={{ width: `${progress}%` }}
-                />
-               </div>
-              </div>
-
-              <div className="mb-4 grid grid-cols-3 gap-2">
-               <Stat label="Complete" value={job.completed} />
-               <Stat label="Success" value={job.successful} good />
-               <Stat label="Failed" value={job.failed} bad={job.failed > 0} />
-              </div>
-
-              <div className="max-h-[430px] overflow-auto rounded-xl border border-white/10">
-               <table className="w-full min-w-[620px] text-left text-xs">
-                <thead className="sticky top-0 bg-zinc-950 text-zinc-500">
-                <tr>
-                 <th className="px-3 py-3">IP</th>
-                 <th className="px-3 py-3">System name</th>
-                 <th className="px-3 py-3">Model</th>
-                 <th className="px-3 py-3">Serial</th>
-                 <th className="px-3 py-3">Status</th>
-                </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                {job.results?.map((r) => (
-                    <tr key={r.ip} className="bg-black/10">
-                     <td className="px-3 py-3 font-mono text-zinc-300">{r.ip}</td>
-                     <td className="px-3 py-3">{r.system_name}</td>
-                     <td className="px-3 py-3">{r.model}</td>
-                     <td className="px-3 py-3 text-zinc-500">{r.serial_number}</td>
-                     <td className="px-3 py-3">
-                      {r.status === 'success' ? (
-                          <span className="inline-flex items-center gap-1 text-emerald-400">
-                                <CheckCircle2 size={13} />
-                                Success
-                              </span>
-                      ) : (
-                          <span
-                              title={r.error || ''}
-                              className="inline-flex items-center gap-1 text-red-400"
-                          >
-                                <XCircle size={13} />
-                           {r.error_type || 'Failed'}
-                              </span>
-                      )}
-                     </td>
-                    </tr>
-                ))}
-                </tbody>
-               </table>
-              </div>
-
-              {job.status === 'complete' && job.failed > 0 && (
-                  <button
-                      disabled={!form.username || !form.password}
-                      onClick={retry}
-                      className="mt-4 w-full rounded-lg border border-white/20 px-4 py-2.5 text-sm font-medium hover:bg-white/10 disabled:opacity-40"
-                  >
-                   Retry {job.failed} failed device(s)
-                  </button>
-              )}
-
-              {job.status === 'complete' && (
-                  <a
-                      href={`/api/jobs/${job.id}/download`}
-                      className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-zinc-950 hover:bg-zinc-200"
-                  >
-                   <Download size={16} />
-                   Download result ZIP
-                  </a>
-              )}
-             </>
-         )}
-        </section>
-       </div>
-      </main>
+function Field({label,children,hint}){return <label className="grid gap-2 text-sm"><span className="font-medium text-zinc-300">{label}</span>{children}{hint&&<span className="text-xs text-zinc-500">{hint}</span>}</label>}
+function App(){
+ const [form,setForm]=useState(initial),[job,setJob]=useState(null),[error,setError]=useState(''),[review,setReview]=useState(null)
+ const busy=job&&['queued','running'].includes(job.status)
+ const update=(key,value)=>{setReview(null);setForm(f=>({...f,[key]:value}))}
+ const progress=job?.total?Math.round(job.completed/job.total*100):0
+ const targetCount=useMemo(()=>form.targets.split(/[\n,]+/).filter(x=>x.trim()).length,[form.targets])
+ async function importCSV(event){const file=event.target.files?.[0];if(!file)return;const content=await file.text();update('targets',content);event.target.value=''}
+ async function retry(){setError('');try{const r=await fetch(`/api/jobs/${job.id}/retry`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:form.username,password:form.password})});const data=await r.json();if(!r.ok)throw new Error(data.detail||'Retry failed');setJob(data)}catch(e){setError(e.message)}}
+ async function preflight(){setError('');try{const r=await fetch('/api/preflight',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({targets:form.targets})});const data=await r.json();if(!r.ok)throw new Error(data.detail||'Invalid targets');setReview(data)}catch(e){setError(e.message)}}
+ async function cancel(){try{const r=await fetch(`/api/jobs/${job.id}/cancel`,{method:'POST'});if(!r.ok)throw new Error('Cancellation failed');setJob(await r.json())}catch(e){setError(e.message)}}
+ async function start(){setReview(null);setError('');setJob(null);try{const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});const data=await r.json();if(!r.ok)throw new Error(data.detail||'Could not start job');setJob(data)}catch(e){setError(e.message)}}
+ useEffect(()=>{if(!busy)return;const t=setInterval(async()=>{try{const r=await fetch(`/api/jobs/${job.id}`);if(r.ok)setJob(await r.json())}catch{}},700);return()=>clearInterval(t)},[busy,job?.id])
+ return <div className="min-h-screen">
+  <header className="border-b border-white/10 bg-black/20 backdrop-blur"><div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4"><div className="flex items-center gap-3"><div className="grid size-9 place-items-center rounded-xl bg-blue-500 text-white shadow-lg shadow-blue-500/20"><Network size={19}/></div><div><div className="font-semibold tracking-tight">NetSnap</div><div className="text-xs text-zinc-500">Scan. Inventory. Backup.</div></div></div><div className="flex items-center gap-2 text-xs text-zinc-500"><ShieldCheck size={15}/> Session-only processing</div></div></header>
+  <main className="mx-auto max-w-7xl px-5 py-10">
+   <section className="mb-9 max-w-2xl"><div className="mb-3 text-xs font-semibold uppercase tracking-[.22em] text-blue-400">Network utility</div><h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">Take a snapshot.<br/><span className="text-zinc-500">Keep what you need.</span></h1><p className="mt-4 max-w-xl text-sm leading-6 text-zinc-400">Run a one-time inventory scan, collect switch configurations, or do both. NetSnap does not require a device database.</p></section>
+   <div className="grid gap-6 lg:grid-cols-[1fr_.9fr]">
+    <section className="rounded-2xl border border-white/10 bg-white/[.035] p-5 sm:p-6">
+     <div className="mb-5 flex items-center justify-between"><div><h2 className="font-semibold">New session</h2><p className="mt-1 text-xs text-zinc-500">Choose an operation and provide your targets.</p></div><Activity className="text-zinc-600" size={19}/></div>
+     <div className="grid gap-3 sm:grid-cols-3">{operations.map(o=><button disabled={busy} key={o.id} onClick={()=>update('operation',o.id)} className={`rounded-xl border p-4 text-left transition ${form.operation===o.id?'border-blue-500/70 bg-blue-500/10':'border-white/10 bg-black/20 hover:border-white/20'}`}><o.icon size={18} className={form.operation===o.id?'text-blue-400':'text-zinc-500'}/><div className="mt-3 text-sm font-medium">{o.title}</div><div className="mt-1 text-xs leading-5 text-zinc-500">{o.text}</div></button>)}</div>
+     <div className="mt-6 grid gap-5 sm:grid-cols-2">
+      <Field label="Vendor"><select disabled={busy} value={form.vendor} onChange={e=>update('vendor',e.target.value)} className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2.5 outline-none focus:border-blue-500"><option value="aruba">Aruba Instant On 1930</option><option value="cisco">Cisco Small Business</option></select></Field>
+      {form.vendor==='cisco'?<Field label="Connection"><select disabled={busy} value={form.connection_method} onChange={e=>update('connection_method',e.target.value)} className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2.5 outline-none focus:border-blue-500"><option value="telnet">Telnet</option><option value="ssh">SSH</option></select></Field>:<Field label="Connection"><div className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2.5 text-zinc-500">Web UI / HTTP</div></Field>}
+      <Field label="Username"><input disabled={busy} autoComplete="off" value={form.username} onChange={e=>update('username',e.target.value)} className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2.5 outline-none focus:border-blue-500"/></Field>
+      <Field label="Password"><input disabled={busy} type="password" autoComplete="new-password" value={form.password} onChange={e=>update('password',e.target.value)} className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2.5 outline-none focus:border-blue-500"/></Field>
      </div>
- );
+     <div className="mt-5"><div className="mb-2 flex items-center justify-between"><span className="text-sm font-medium text-zinc-300">Target input</span><label className="cursor-pointer text-xs font-medium text-blue-400 hover:text-blue-300">Import CSV / TXT<input type="file" accept=".csv,.txt,text/csv,text/plain" className="hidden" disabled={busy} onChange={importCSV}/></label></div><Field label="Targets" hint="One IP/hostname per line, comma-separated, or an IP range such as 192.168.53.10-192.168.53.50."><textarea disabled={busy} rows={7} value={form.targets} onChange={e=>update('targets',e.target.value)} placeholder={'192.168.53.101\n192.168.53.102\n192.168.53.103'} className="resize-y rounded-lg border border-white/10 bg-zinc-950 px-3 py-3 font-mono text-sm outline-none placeholder:text-zinc-700 focus:border-blue-500"/></Field></div>
+     <div className="mt-5 grid gap-5 sm:grid-cols-2"><Field label="Concurrency"><input disabled={busy} type="number" min="1" max="10" value={form.concurrency} onChange={e=>update('concurrency',+e.target.value)} className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2.5 outline-none focus:border-blue-500"/></Field><Field label="Timeout (seconds)"><input disabled={busy} type="number" min="2" max="60" value={form.timeout} onChange={e=>update('timeout',+e.target.value)} className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2.5 outline-none focus:border-blue-500"/></Field></div>
+     {review&&<div className="mt-5 rounded-xl border border-blue-500/30 bg-blue-500/5 p-4"><h3 className="font-semibold text-blue-300">Confirm network operations</h3><p className="mt-2 text-xs text-zinc-300">{review.total} explicitly selected targets · {form.vendor} · {form.operation} · {form.concurrency} concurrent connections · {form.vendor==='cisco'?form.connection_method.toUpperCase():'HTTP'}.</p><p className="mt-2 text-xs text-amber-300">Only proceed with authorized targets. {form.vendor==='aruba'||form.connection_method==='telnet'?'This protocol may transmit sensitive information without transport encryption.':''}</p><div className="mt-3 max-h-24 overflow-auto font-mono text-xs text-zinc-400">{review.targets.join(', ')}</div><div className="mt-4 flex gap-2"><button onClick={()=>setReview(null)} className="rounded-lg border border-white/20 px-3 py-2 text-xs">Back</button><button onClick={start} className="rounded-lg bg-blue-500 px-3 py-2 text-xs font-semibold text-white">Confirm and run</button></div></div>}
+     {error&&<div className="mt-5 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</div>}
+     <div className="mt-6 flex items-center justify-between border-t border-white/10 pt-5"><span className="text-xs text-zinc-500">{targetCount} target line{targetCount===1?'':'s'}</span><button disabled={busy||!form.targets.trim()||!form.username||!form.password} onClick={preflight} className="inline-flex items-center gap-2 rounded-lg bg-blue-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-40">{busy?<LoaderCircle className="animate-spin" size={16}/>:<Play size={16}/>} {busy?'Running…':'Review session'}</button></div>
+    </section>
+    <section className="min-w-0 rounded-2xl border border-white/10 bg-white/[.035] p-5 sm:p-6">
+     <div className="mb-5"><h2 className="font-semibold">Session results</h2><p className="mt-1 text-xs text-zinc-500">Live results from the current run.</p></div>
+     {!job?<div className="grid min-h-[430px] place-items-center rounded-xl border border-dashed border-white/10 bg-black/10"><div className="max-w-xs text-center"><Server className="mx-auto text-zinc-700" size={28}/><div className="mt-3 text-sm text-zinc-400">No session running</div><p className="mt-1 text-xs leading-5 text-zinc-600">Configure your targets and start a session. Results will appear here as devices finish.</p></div></div>:<>
+      {busy&&<button onClick={cancel} className="mb-4 inline-flex items-center gap-2 rounded-lg border border-amber-500/40 px-3 py-2 text-xs text-amber-300"><Square size={13}/> Stop after active connections finish</button>}
+      <div className="mb-5"><div className="mb-2 flex justify-between text-xs"><span className="capitalize text-zinc-400">{job.status}</span><span className="text-zinc-500">{job.completed} / {job.total}</span></div><div className="h-2 overflow-hidden rounded-full bg-zinc-800"><div className="h-full bg-blue-500 transition-all" style={{width:`${progress}%`}}/></div></div>
+      <div className="mb-4 grid grid-cols-3 gap-2"><Stat label="Complete" value={job.completed}/><Stat label="Success" value={job.successful} good/><Stat label="Failed" value={job.failed} bad={job.failed>0}/></div>
+      <div className="max-h-[430px] overflow-auto rounded-xl border border-white/10"><table className="w-full min-w-[620px] text-left text-xs"><thead className="sticky top-0 bg-zinc-950 text-zinc-500"><tr><th className="px-3 py-3">IP</th><th className="px-3 py-3">System name</th><th className="px-3 py-3">Model</th><th className="px-3 py-3">Serial</th><th className="px-3 py-3">Status</th></tr></thead><tbody className="divide-y divide-white/5">{job.results?.map(r=><tr key={r.ip} className="bg-black/10"><td className="px-3 py-3 font-mono text-zinc-300">{r.ip}</td><td className="px-3 py-3">{r.system_name}</td><td className="px-3 py-3">{r.model}</td><td className="px-3 py-3 text-zinc-500">{r.serial_number}</td><td className="px-3 py-3">{r.status==='success'?<span className="inline-flex items-center gap-1 text-emerald-400"><CheckCircle2 size={13}/>Success</span>:<span title={r.error||''} className="inline-flex items-center gap-1 text-red-400"><XCircle size={13}/>{r.error_type||"Failed"}</span>}</td></tr>)}</tbody></table></div>
+      {job.events?.length>0&&<details className="mt-4 rounded-lg border border-white/10 p-3"><summary className="cursor-pointer text-xs text-zinc-300">Session activity ({job.events.length})</summary><div className="mt-3 max-h-40 overflow-auto font-mono text-xs text-zinc-500">{job.events.map((e,i)=><div key={i} className="py-1">{new Date(e.time*1000).toLocaleTimeString()} · {e.event} · {e.target||e.detail}</div>)}</div></details>}
+      {job.status==='complete'&&job.failed>0&&<button disabled={!form.username||!form.password} onClick={retry} className="mt-4 w-full rounded-lg border border-white/20 px-4 py-2.5 text-sm font-medium hover:bg-white/10 disabled:opacity-40">Retry {job.failed} failed device(s)</button>}
+      {['complete','cancelled'].includes(job.status)&&<a href={`/api/jobs/${job.id}/download`} className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-zinc-950 hover:bg-zinc-200"><Download size={16}/>Download result ZIP</a>}
+     </>}
+    </section>
+   </div>
+  </main>
+ </div>
 }
-
-function Stat({ label, value, good, bad }) {
- return (
-     <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-      <div className="text-[11px] text-zinc-600">{label}</div>
-      <div
-          className={`mt-1 text-lg font-semibold ${
-              good ? 'text-emerald-400' : bad ? 'text-red-400' : 'text-zinc-200'
-          }`}
-      >
-       {value}
-      </div>
-     </div>
- );
-}
-
-export default App;
+function Stat({label,value,good,bad}){return <div className="rounded-lg border border-white/10 bg-black/20 p-3"><div className="text-[11px] text-zinc-600">{label}</div><div className={`mt-1 text-lg font-semibold ${good?'text-emerald-400':bad?'text-red-400':'text-zinc-200'}`}>{value}</div></div>}
+export default App
